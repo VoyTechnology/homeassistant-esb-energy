@@ -1,0 +1,10 @@
+{
+  "domain": "esb_energy",
+  "name": "ESB Energy Integration",
+  "documentation": "https://github.com/yourrepo/homeassistant-esb-energy",
+  "requirements": [],
+  "dependencies": ["file_upload"],
+  "codeowners": ["@yourhandle"],
+  "version": "1.1.1",
+  "config_flow": true
+}

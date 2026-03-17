@@ -1,0 +1,15 @@
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: homeassistant
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./config:/config
+      - ./custom_components/esb_energy:/config/custom_components/esb_energy
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - TZ=UTC
+    ports:
+      - "8123:8123"
+    command: sh -c "pip install aiohttp beautifulsoup4 && python -m homeassistant --config /config"

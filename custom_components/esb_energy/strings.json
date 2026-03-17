@@ -1,0 +1,36 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "ESB Energy",
+        "description": "Upload an ESB CSV export to import your smart meter readings.",
+        "data": {
+          "mprn": "MPRN Number (optional)",
+          "csv_file": "CSV File"
+        }
+      }
+    },
+    "error": {
+      "invalid_mprn": "Please enter a valid 11-digit MPRN number",
+      "csv_required": "CSV file is required",
+      "invalid_csv": "CSV file is invalid or missing required columns",
+      "file_not_found": "CSV file could not be found on disk"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "ESB Energy",
+        "description": "Update the CSV file used by this integration.",
+        "data": {
+          "csv_file": "CSV File"
+        }
+      }
+    },
+    "error": {
+      "csv_required": "CSV file is required",
+      "invalid_csv": "CSV file is invalid or missing required columns",
+      "file_not_found": "CSV file could not be found on disk"
+    }
+  }
+}
