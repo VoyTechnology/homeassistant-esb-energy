@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import shutil
+import csv
 from typing import Any
 
 import voluptuous as vol
@@ -13,7 +14,6 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.components.file_upload import process_uploaded_file
 from homeassistant.helpers import selector
-from homeassistant.util.ulid import ulid_hex
 
 from .const import CONF_CSV_FILE, CONF_MPRN, DOMAIN
 
@@ -150,9 +150,7 @@ def _normalize_file_input(value: Any) -> str:
 def _build_upload_path(hass, entry_id: str | None) -> Path:
     """Build a target path for the uploaded CSV file."""
     base_dir = Path(hass.config.path("esb_energy", "uploads"))
-    if entry_id:
-        return base_dir / f"{entry_id}.csv"
-    return base_dir / f"esb_energy_{ulid_hex()}.csv"
+    return base_dir / "esb_energy.csv"
 
 
 def _validate_csv_header(content: str) -> None:
@@ -174,7 +172,67 @@ def save_uploaded_csv_file(hass, uploaded_file_id: str, target_path: Path) -> st
             content = file.read_text(encoding="utf-8-sig")
             _validate_csv_header(content)
             target_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(file, target_path)
+            _merge_csv_content(target_path, content)
             return str(target_path)
     except ValueError as err:
         raise FileNotFoundError("Uploaded file not found") from err
+
+
+def _merge_csv_content(target_path: Path, content: str) -> None:
+    """Merge uploaded CSV content into a single consolidated file."""
+    rows = _read_csv_rows(content)
+    if not rows:
+        raise InvalidCsvFile("No CSV data found")
+
+    existing_rows: list[dict[str, str]] = []
+    if target_path.exists():
+        existing_rows = _read_csv_rows(target_path.read_text(encoding="utf-8-sig"))
+
+    merged = _dedupe_rows(existing_rows + rows)
+    merged.sort(
+        key=lambda row: (
+            row.get("MPRN", ""),
+            row.get("Read Type", ""),
+            row.get("Read Date and End Time", ""),
+        )
+    )
+
+    fieldnames = ["MPRN", "Read Value", "Read Type", "Read Date and End Time"]
+    with target_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in merged:
+            writer.writerow({key: row.get(key, "") for key in fieldnames})
+
+
+def _read_csv_rows(content: str) -> list[dict[str, str]]:
+    """Parse CSV content into rows, dropping the serial number column."""
+    lines = content.strip().splitlines()
+    if len(lines) < 2:
+        return []
+    reader = csv.DictReader(lines)
+    rows: list[dict[str, str]] = []
+    for row in reader:
+        cleaned = {
+            "MPRN": (row.get("MPRN") or "").strip(),
+            "Read Value": (row.get("Read Value") or "").strip(),
+            "Read Type": (row.get("Read Type") or "").strip(),
+            "Read Date and End Time": (row.get("Read Date and End Time") or "").strip(),
+        }
+        if not cleaned["MPRN"] or not cleaned["Read Date and End Time"]:
+            continue
+        rows.append(cleaned)
+    return rows
+
+
+def _dedupe_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Remove duplicate rows by MPRN + Read Type + timestamp."""
+    seen: set[tuple[str, str, str]] = set()
+    deduped: list[dict[str, str]] = []
+    for row in rows:
+        key = (row.get("MPRN", ""), row.get("Read Type", ""), row.get("Read Date and End Time", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
