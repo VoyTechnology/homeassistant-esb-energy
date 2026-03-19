@@ -1,6 +1,7 @@
 # Home Assistant – ESB Energy Integration
 
-Disclaimer: This project is completely vibecoded, and automatic fetching from ESB is currently completely broken.
+> [!WARNING]
+> This project is completely vibecoded, automatic fetching from ESB is currently completely broken, and it is experimental. It is not recommended to run this to get real data.
 
 This repository contains a **Home Assistant custom component** that reads energy data from ESB CSV exports and exposes import/export sensors plus historical statistics for Home Assistant’s **Energy** dashboard.
 
