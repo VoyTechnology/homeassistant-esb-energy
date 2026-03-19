@@ -3,16 +3,22 @@
     "step": {
       "user": {
         "title": "ESB Energy",
-        "description": "Upload an ESB CSV export to import your smart meter readings.",
+        "description": "Upload an ESB CSV export or enter ESB credentials to auto-fetch new data.",
         "data": {
           "mprn": "MPRN Number (optional)",
+          "username": "ESB Username (optional)",
+          "password": "ESB Password (optional)",
+          "fetch_interval_hours": "Fetch Interval (hours, min 6)",
           "csv_file": "CSV File"
         }
       }
     },
     "error": {
       "invalid_mprn": "Please enter a valid 11-digit MPRN number",
+      "mprn_required_for_login": "MPRN is required when using ESB login",
+      "username_password_required": "Both username and password are required",
       "csv_required": "CSV file is required",
+      "csv_or_login_required": "Upload a CSV or enter ESB username and password",
       "invalid_csv": "CSV file is invalid or missing required columns",
       "file_not_found": "CSV file could not be found on disk"
     }
@@ -21,14 +27,21 @@
     "step": {
       "init": {
         "title": "ESB Energy",
-        "description": "Update the CSV file used by this integration.",
+        "description": "Upload a new CSV or enter ESB credentials to auto-fetch new data. You can use either option.",
         "data": {
-          "csv_file": "CSV File"
+          "csv_file": "CSV File",
+          "mprn": "MPRN Number (optional)",
+          "username": "ESB Username (optional)",
+          "password": "ESB Password (optional)",
+          "fetch_interval_hours": "Fetch Interval (hours, min 6)"
         }
       }
     },
     "error": {
       "csv_required": "CSV file is required",
+      "mprn_required_for_login": "MPRN is required when using ESB login",
+      "username_password_required": "Both username and password are required",
+      "csv_or_login_required": "Upload a CSV or enter ESB username and password",
       "invalid_csv": "CSV file is invalid or missing required columns",
       "file_not_found": "CSV file could not be found on disk"
     }

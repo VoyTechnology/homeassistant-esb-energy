@@ -1,10 +1,14 @@
 # Home Assistant – ESB Energy Integration
 
+Disclaimer: This project is completely vibecoded, and automatic fetching from ESB is currently completely broken.
+
 This repository contains a **Home Assistant custom component** that reads energy consumption data from an ESB CSV export and exposes it as a sensor that can be used in Home Assistant’s **Energy** tab.
 
 ## Features
 
 * Reads the latest reading from a CSV file you upload in the integration config.
+* Optionally logs into ESB Networks to download a fresh CSV on a schedule (default 24 hours).
+* Exposes a last fetch timestamp sensor when auto-download is enabled.
 * Exposes a single sensor: `sensor.esb_energy` with unit `kWh`.
 * Works out‑of‑the‑box with Docker Compose for local testing.
 
@@ -37,6 +41,9 @@ Open <http://localhost:8123> and finish the HA setup. The sensor will appear as 
    esb_energy:
      mprn: YOUR_MPRN_NUMBER
      csv_file: /config/esb_readings.csv
+     username: YOUR_ESB_USERNAME
+     password: YOUR_ESB_PASSWORD
+     fetch_interval_hours: 24
    ```
 3. Restart Home Assistant.
 
