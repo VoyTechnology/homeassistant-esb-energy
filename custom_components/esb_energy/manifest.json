@@ -5,6 +5,6 @@
   "requirements": ["beautifulsoup4"],
   "dependencies": ["file_upload"],
   "codeowners": ["@yourhandle"],
-  "version": "0.5.0",
+  "version": "0.5.1",
   "config_flow": true
 }

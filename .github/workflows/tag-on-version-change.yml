@@ -34,7 +34,7 @@ jobs:
       - name: Check for existing tag
         id: tagcheck
         run: |
-          if git rev-parse "refs/tags/${{ steps.manifest.outputs.version }}" >/dev/null 2>&1; then
+          if git rev-parse "refs/tags/v${{ steps.manifest.outputs.version }}" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
@@ -43,12 +43,12 @@ jobs:
       - name: Create tag
         if: steps.tagcheck.outputs.exists == 'false'
         run: |
-          git tag "${{ steps.manifest.outputs.version }}"
-          git push origin "${{ steps.manifest.outputs.version }}"
+          git tag "v${{ steps.manifest.outputs.version }}"
+          git push origin "v${{ steps.manifest.outputs.version }}"
 
       - name: Create GitHub release
         if: steps.tagcheck.outputs.exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.manifest.outputs.version }}
+          tag_name: v${{ steps.manifest.outputs.version }}
           generate_release_notes: true
