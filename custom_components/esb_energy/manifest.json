@@ -1,10 +1,11 @@
 {
   "domain": "esb_energy",
   "name": "ESB Energy Integration",
-  "documentation": "https://github.com/yourrepo/homeassistant-esb-energy",
+  "documentation": "https://github.com/VoyTechnology/homeassistant-esb-energy#readme",
+  "issue_tracker": "https://github.com/VoyTechnology/homeassistant-esb-energy/issues",
   "requirements": ["beautifulsoup4"],
   "dependencies": ["file_upload"],
-  "codeowners": ["@yourhandle"],
+  "codeowners": ["@VoyTechnology"],
   "version": "0.5.1",
   "config_flow": true
 }
