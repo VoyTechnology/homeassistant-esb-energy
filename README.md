@@ -2,14 +2,15 @@
 
 Disclaimer: This project is completely vibecoded, and automatic fetching from ESB is currently completely broken.
 
-This repository contains a **Home Assistant custom component** that reads energy consumption data from an ESB CSV export and exposes it as a sensor that can be used in Home Assistant’s **Energy** tab.
+This repository contains a **Home Assistant custom component** that reads energy data from ESB CSV exports and exposes import/export sensors plus historical statistics for Home Assistant’s **Energy** dashboard.
 
 ## Features
 
-* Reads the latest reading from a CSV file you upload in the integration config.
-* Optionally logs into ESB Networks to download a fresh CSV on a schedule (default 24 hours).
-* Exposes a last fetch timestamp sensor when auto-download is enabled.
-* Exposes a single sensor: `sensor.esb_energy` with unit `kWh`.
+* Upload a CSV in the integration config; the file is merged into a single consolidated CSV.
+* Supports both **import** and **export** readings (register and interval types).
+* Exposes separate sensors: `sensor.esb_energy_import_<mprn>` and `sensor.esb_energy_export_<mprn>`.
+* Imports historical usage into Home Assistant statistics for the Energy dashboard.
+* Automatic ESB fetching is currently broken and disabled by default.
 * Works out‑of‑the‑box with Docker Compose for local testing.
 
 ## Quick Start (Docker)
@@ -31,19 +32,16 @@ EOF
 docker compose up -d
 ```
 
-Open <http://localhost:8123> and finish the HA setup. The sensor will appear as `sensor.esb_energy`.
+Open <http://localhost:8123> and finish the HA setup. The sensors will appear as `sensor.esb_energy_import_<mprn>` and `sensor.esb_energy_export_<mprn>`.
 
 ## Manual Installation
 
 1. Copy the `custom_components/esb_energy/` folder into your Home Assistant config directory.
-2. Add the following to `configuration.yaml`:
+2. Add the following to `configuration.yaml` (optional; UI flow is preferred):
    ```yaml
    esb_energy:
      mprn: YOUR_MPRN_NUMBER
      csv_file: /config/esb_readings.csv
-     username: YOUR_ESB_USERNAME
-     password: YOUR_ESB_PASSWORD
-     fetch_interval_hours: 24
    ```
 3. Restart Home Assistant.
 
