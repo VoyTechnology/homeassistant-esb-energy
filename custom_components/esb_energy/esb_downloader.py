@@ -6,15 +6,16 @@ import asyncio
 import json
 import logging
 import re
+from urllib.parse import quote
+from yarl import URL
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from aiohttp import ClientResponseError, ClientSession
+from aiohttp import ClientResponseError, ClientSession, CookieJar
 from bs4 import BeautifulSoup
 
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
@@ -55,7 +56,9 @@ class ESBDownloader:
         self._username = username
         self._password = password
         self._interval = timedelta(hours=max(1, interval_hours))
-        self._session: ClientSession = async_get_clientsession(hass)
+        # Use a dedicated session with an unsafe cookie jar so Azure B2C cookies
+        # from the login domain are preserved across redirects.
+        self._session: ClientSession = ClientSession(cookie_jar=CookieJar(unsafe=True))
         self._store = Store(hass, _STORE_VERSION, f"{DOMAIN}.{entry_id}")
         self._last_fetch: Optional[datetime] = None
         self._unsub = None
@@ -78,6 +81,8 @@ class ESBDownloader:
         if self._unsub:
             self._unsub()
             self._unsub = None
+        if not self._session.closed:
+            await self._session.close()
 
     async def async_maybe_fetch(self, reason: str) -> FetchResult:
         """Fetch if due and configured."""
@@ -140,43 +145,72 @@ class ESBDownloader:
 
     async def _download_csv(self) -> str:
         """Log in and download the CSV content."""
-        login_page = await self._request_text(
-            "GET", "https://myaccount.esbnetworks.ie/"
+        login_page, authorize_url = await self._request_text_with_url(
+            "GET",
+            "https://myaccount.esbnetworks.ie/",
+            allow_redirects=True,
+            headers=_browser_headers(),
+            log_label="Authorize",
+        )
+        _LOGGER.debug("Authorize URL resolved to: %s", authorize_url)
+        _LOGGER.debug(
+            "Login cookie names before SelfAsserted: %s",
+            self._cookie_names_for_domain("login.esbnetworks.ie"),
         )
         settings = _extract_settings(login_page)
         csrf = settings.get("csrf")
         trans_id = settings.get("transId")
         if not csrf or not trans_id:
             raise ValueError("Unable to extract login flow settings.")
+        _LOGGER.debug(
+            "Extracted login settings (csrf len=%s, transId present=%s)",
+            len(csrf) if csrf else 0,
+            bool(trans_id),
+        )
+        csrf_cookie = self._cookie_value_for_domain("login.esbnetworks.ie", "x-ms-cpim-csrf")
+        _LOGGER.debug(
+            "CSRF cookie present=%s, matches header=%s",
+            bool(csrf_cookie),
+            bool(csrf_cookie) and csrf_cookie == csrf,
+        )
 
+        self_asserted_url = _build_self_asserted_url(trans_id)
+        _LOGGER.debug("SelfAsserted URL: %s", self_asserted_url)
+        self_asserted_headers = {
+            **_browser_headers(),
+            "X-CSRF-TOKEN": csrf,
+            "X-Requested-With": "XMLHttpRequest",
+            "Origin": "https://login.esbnetworks.ie",
+            "Referer": authorize_url,
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "Accept": "*/*",
+        }
+        _LOGGER.debug(
+            "SelfAsserted headers (redacted): %s",
+            _redact_headers(self_asserted_headers),
+        )
         await self._request_text(
             "POST",
-            "https://login.esbnetworks.ie/esbntwkscustportalprdb2c01.onmicrosoft.com/B2C_1A_signup_signin/SelfAsserted",
-            params={"tx": trans_id, "p": "B2C_1A_signup_signin"},
+            _raw_url(self_asserted_url),
             data={
                 "signInName": self._username,
                 "password": self._password,
                 "request_type": "RESPONSE",
             },
-            headers={
-                "x-csrf-token": csrf,
-                "X-Requested-With": "XMLHttpRequest",
-                "Origin": "https://login.esbnetworks.ie",
-                "Referer": "https://login.esbnetworks.ie/",
-                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-            },
+            headers=self_asserted_headers,
             log_label="SelfAsserted",
         )
 
+        confirmed_url = _build_confirmed_url(csrf, trans_id)
+        _LOGGER.debug("Confirmed URL: %s", confirmed_url)
         confirmed = await self._request_text(
             "GET",
-            "https://login.esbnetworks.ie/esbntwkscustportalprdb2c01.onmicrosoft.com/B2C_1A_signup_signin/api/CombinedSigninAndSignup/confirmed",
-            params={
-                "rememberMe": "false",
-                "csrf_token": csrf,
-                "tx": trans_id,
-                "p": "B2C_1A_signup_signin",
+            _raw_url(confirmed_url),
+            headers={
+                "Referer": authorize_url,
+                **_browser_headers(),
             },
+            log_label="Confirmed",
         )
 
         form_data = _extract_auto_form(confirmed)
@@ -188,7 +222,9 @@ class ESBDownloader:
                 "client_info": form_data["client_info"],
                 "code": form_data["code"],
             },
+            headers=_browser_headers(),
             allow_redirects=False,
+            log_label="SigninOidc",
         )
 
         await self._request_text("GET", "https://myaccount.esbnetworks.ie/")
@@ -196,18 +232,44 @@ class ESBDownloader:
             "GET", "https://myaccount.esbnetworks.ie/Api/HistoricConsumption"
         )
 
-        token_payload = await self._request_json("GET", "https://myaccount.esbnetworks.ie/af/t")
+        token_payload = await self._request_json(
+            "GET",
+            "https://myaccount.esbnetworks.ie/af/t",
+            headers={
+                "x-ReturnUrl": "https://myaccount.esbnetworks.ie/Api/HistoricConsumption"
+            },
+        )
         token = token_payload.get("token")
         if not token:
             raise ValueError("Unable to obtain download token.")
 
+        search_type = self._select_search_type()
+        _LOGGER.debug(
+            "ESB download using searchType=%s (interval=%s, last_fetch=%s)",
+            search_type,
+            self._interval,
+            self._last_fetch,
+        )
         download = await self._request_text(
             "POST",
             "https://myaccount.esbnetworks.ie/DataHub/DownloadHdfPeriodic",
-            json_payload={"mprn": self._mprn, "searchType": "intervalkw"},
-            headers={"X-AF-TOKEN": token},
+            json_payload={"mprn": self._mprn, "searchType": search_type},
+            headers={
+                "x-xsrf-token": token,
+                "x-ReturnUrl": "https://myaccount.esbnetworks.ie/Api/HistoricConsumption",
+                "Origin": "https://myaccount.esbnetworks.ie",
+                "Referer": "https://myaccount.esbnetworks.ie/Api/HistoricConsumption",
+            },
         )
         return download
+
+    def _select_search_type(self) -> str:
+        """Choose the CSV search type based on interval and first-run behavior."""
+        if self._last_fetch is None:
+            return "day"
+        if self._interval > timedelta(hours=24):
+            return "day"
+        return "intervalkw"
 
     async def _request_text(
         self,
@@ -234,11 +296,72 @@ class ESBDownloader:
             if resp.status >= 400:
                 label = f"{log_label}: " if log_label else ""
                 _LOGGER.error("%sHTTP %s response body: %s", label, resp.status, text)
-                resp.raise_for_status()
+                raise ValueError(f"{label}HTTP {resp.status} response body: {text[:800]}")
             return text
 
-    async def _request_json(self, method: str, url: str) -> dict:
-        async with self._session.request(method, url) as resp:
+    async def _request_text_with_url(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict | None = None,
+        data: dict | None = None,
+        json_payload: dict | None = None,
+        headers: dict | None = None,
+        allow_redirects: bool = True,
+        log_label: str | None = None,
+    ) -> tuple[str, str]:
+        async with self._session.request(
+            method,
+            url,
+            params=params,
+            data=data,
+            json=json_payload,
+            headers=headers,
+            allow_redirects=allow_redirects,
+        ) as resp:
+            text = await resp.text()
+            if resp.status >= 400:
+                label = f"{log_label}: " if log_label else ""
+                _LOGGER.error("%sHTTP %s response body: %s", label, resp.status, text)
+                raise ValueError(f"{label}HTTP {resp.status} response body: {text[:800]}")
+            return text, str(resp.url)
+
+    def _cookie_names_for_domain(self, domain: str) -> list[str]:
+        jar = self._session.cookie_jar.filter_cookies(f"https://{domain}/")
+        return sorted(jar.keys())
+
+    def _cookie_value_for_domain(self, domain: str, name: str) -> str | None:
+        jar = self._session.cookie_jar.filter_cookies(f"https://{domain}/")
+        morsel = jar.get(name)
+        return morsel.value if morsel else None
+
+
+def _redact_headers(headers: dict[str, str]) -> dict[str, str]:
+    redacted = {}
+    for key, value in headers.items():
+        if key.lower() in {"authorization", "cookie"}:
+            redacted[key] = "<redacted>"
+        elif key.lower() in {"x-csrf-token"}:
+            redacted[key] = f"<len:{len(value)}>"
+        else:
+            redacted[key] = value
+    return redacted
+
+    async def _request_json(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: dict | None = None,
+        headers: dict | None = None,
+    ) -> dict:
+        async with self._session.request(
+            method,
+            url,
+            params=params,
+            headers=headers,
+        ) as resp:
             resp.raise_for_status()
             text = await resp.text()
             return json.loads(text)
@@ -267,4 +390,39 @@ def _extract_auto_form(html: str) -> dict:
         "state": state.get("value", ""),
         "client_info": client_info.get("value", ""),
         "code": code.get("value", ""),
+    }
+
+
+def _build_self_asserted_url(trans_id: str) -> str:
+    return (
+        "https://login.esbnetworks.ie/"
+        "esbntwkscustportalprdb2c01.onmicrosoft.com/"
+        "B2C_1A_signup_signin/SelfAsserted"
+        f"?tx={trans_id}&p=B2C_1A_signup_signin"
+    )
+
+
+def _build_confirmed_url(csrf: str, trans_id: str) -> str:
+    csrf_safe = quote(csrf, safe="")
+    return (
+        "https://login.esbnetworks.ie/"
+        "esbntwkscustportalprdb2c01.onmicrosoft.com/"
+        "B2C_1A_signup_signin/api/CombinedSigninAndSignup/confirmed"
+        f"?rememberMe=false&csrf_token={csrf_safe}&tx={trans_id}&p=B2C_1A_signup_signin"
+    )
+
+
+def _raw_url(url: str) -> URL:
+    # Preserve raw query params (notably tx=StateProperties=...) without encoding.
+    return URL(url, encoded=True)
+
+
+def _browser_headers() -> dict[str, str]:
+    return {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:148.0) "
+            "Gecko/20100101 Firefox/148.0"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
     }
